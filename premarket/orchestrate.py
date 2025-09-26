@@ -346,19 +346,47 @@ def run(params: RunParams) -> int:
     news_enabled = params.news_override if params.news_override is not None else cfg.news.enabled
     news_cfg = cfg.news.copy()
     news_cfg.enabled = bool(news_enabled)
+    weights_version = cfg.premarket.weights_version or "default"
 
     output_dir = _determine_output_dir(params.output_base_dir, today)
     raw_csv_path = Path("data/raw") / today / "finviz_elite.csv"
 
     timings: Dict[str, float] = {}
     notes: list[str] = []
+    row_counts: Dict[str, int] = {"raw": 0, "qualified": 0, "rejected": 0, "topN": 0}
 
     start = time.perf_counter()
     try:
         csv_path = loader_finviz.download_csv(finviz_url, raw_csv_path, use_cache=params.use_cache)
     except RuntimeError:
+        timings["download"] = time.perf_counter() - start
         logger.error("Failed to download CSV and no cache available.")
-        return 3
+        notes.append("used_cached_csv: False")
+        notes.append("download_failed_no_cache")
+        generated_at = utils.timestamp_iso()
+        run_summary = _build_run_summary(
+            today,
+            cfg,
+            timings,
+            notes,
+            row_counts,
+            {},
+            params.env_overrides,
+            weights_version,
+            "",
+            False,
+            False,
+            0,
+        )
+        _emit_empty_outputs(output_dir, generated_at, top_n_value, run_summary)
+        tier_display = _format_tier_counts({})
+        summary_line = (
+            f"Date={today} {_timezone_label(params.timezone, params.run_date)} | "
+            f"TopN=0 | A/B/C={tier_display} | SectorCap=False | "
+            f"Cache=False | Out={output_dir}"
+        )
+        logger.info(summary_line)
+        return 2 if params.fail_on_empty else 0
     timings["download"] = time.perf_counter() - start
     used_cached_csv = csv_path != raw_csv_path
     notes.append(f"used_cached_csv: {used_cached_csv}")
@@ -389,7 +417,6 @@ def run(params: RunParams) -> int:
     }
 
     generated_at = utils.timestamp_iso()
-    weights_version = cfg.premarket.weights_version or "default"
 
     if qualified_df.empty:
         logger.warning("No candidates qualified after filters.")
