@@ -156,8 +156,45 @@ def redact_token(url: str) -> str:
 
 
 def env_str(key: str, default: Optional[str] = None) -> Optional[str]:
-    """Read an environment variable with optional default."""
-    return os.environ.get(key, default)
+    """Read an environment variable with optional default.
+
+    The helper mirrors the forgiving behaviour of many ``.env`` parsers by
+    treating blank values or lines that only contain a comment as "unset".
+    Trailing inline comments introduced with ``#`` are stripped when they are
+    separated from the value by whitespace. This keeps legitimate values such as
+    URLs with fragments (``.../#section``) intact while letting users annotate
+    their environment configuration without breaking file paths.
+    """
+
+    value = os.environ.get(key)
+    if value is None:
+        return default
+
+    stripped = value.strip()
+    if not stripped or stripped.startswith("#"):
+        return default
+
+    comment_index: Optional[int] = None
+    for idx, char in enumerate(stripped):
+        if char == "#" and (idx == 0 or stripped[idx - 1].isspace()):
+            comment_index = idx
+            break
+
+    if comment_index is not None:
+        stripped = stripped[:comment_index].rstrip()
+
+    if not stripped:
+        return default
+
+    if stripped[0] in {'"', "'"} and stripped[-1] == stripped[0]:
+        stripped = stripped[1:-1]
+    else:
+        if stripped and stripped[0] in {'"', "'"} and stripped.count(stripped[0]) == 1:
+            stripped = stripped[1:]
+        if stripped and stripped[-1] in {'"', "'"} and stripped.count(stripped[-1]) == 1:
+            stripped = stripped[:-1]
+
+    return stripped or default
 
 
 def ensure_iterable(obj: Optional[Iterable[str]]) -> list[str]:
