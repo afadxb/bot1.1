@@ -194,6 +194,7 @@ def env_str(key: str, default: Optional[str] = None) -> Optional[str]:
         if stripped and stripped[-1] in {'"', "'"} and stripped.count(stripped[-1]) == 1:
             stripped = stripped[:-1]
 
+
     return stripped or default
 
 
