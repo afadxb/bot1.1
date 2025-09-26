@@ -79,13 +79,6 @@ def download_csv(url: str, out_path: Path, use_cache: bool) -> Path:
     """Download the CSV, falling back to cache if necessary."""
     utils.ensure_directory(out_path.parent)
 
-    if use_cache and out_path.exists():
-        ttl = timedelta(minutes=_cache_ttl_minutes())
-        modified = datetime.fromtimestamp(out_path.stat().st_mtime, tz=timezone.utc)
-        if datetime.now(timezone.utc) - modified < ttl:
-            LOGGER.info("Using cached CSV at %s", out_path)
-            return out_path
-
     try:
         LOGGER.info("Downloading Finviz CSV from %s", utils.redact_token(url))
         content = _http_get(url)
@@ -93,11 +86,25 @@ def download_csv(url: str, out_path: Path, use_cache: bool) -> Path:
         return out_path
     except (requests.RequestException, RetryError) as exc:
         LOGGER.warning("Download failed: %s", exc)
-        fallback = _latest_cached_file(out_path.parent.parent)
-        if fallback is None:
-            raise RuntimeError("Download failed and no cached CSV available") from exc
-        LOGGER.warning("Falling back to cached CSV at %s", fallback)
-        return fallback
+        if use_cache:
+            fallback = _latest_cached_file(out_path.parent.parent)
+            if fallback is not None:
+                ttl_minutes = _cache_ttl_minutes()
+                if ttl_minutes > 0:
+                    ttl = timedelta(minutes=ttl_minutes)
+                    modified = datetime.fromtimestamp(fallback.stat().st_mtime, tz=timezone.utc)
+                    age = datetime.now(timezone.utc) - modified
+                    if age > ttl:
+                        LOGGER.warning(
+                            "Cached CSV at %s is older than %s minutes; ignoring",
+                            fallback,
+                            ttl_minutes,
+                        )
+                        fallback = None
+            if fallback is not None:
+                LOGGER.warning("Falling back to cached CSV at %s", fallback)
+                return fallback
+        raise RuntimeError("Download failed and no cached CSV available") from exc
 
 
 def read_csv(path: Path) -> pd.DataFrame:
