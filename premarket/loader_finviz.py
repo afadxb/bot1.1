@@ -6,6 +6,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
+from urllib import request as urllib_request
+from urllib.error import HTTPError, URLError
 
 import pandas as pd
 import requests
@@ -26,11 +28,42 @@ def _cache_ttl_minutes() -> int:
         return 60
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
-def _http_get(url: str) -> str:
+def _fetch_with_requests(url: str) -> str:
     response = requests.get(url, timeout=15)
     response.raise_for_status()
     return response.text
+
+
+def _fetch_with_urllib(url: str) -> str:
+    try:
+        with urllib_request.urlopen(url, timeout=15) as response:  # type: ignore[arg-type]
+            status = getattr(response, "status", 200)
+            if status and status >= 400:
+                raise requests.RequestException(f"HTTP {status}")
+            headers = getattr(response, "headers", None)
+            if headers is not None:
+                encoding = headers.get_content_charset() or "utf-8"
+            else:
+                encoding = "utf-8"
+            content = response.read()
+            return content.decode(encoding, errors="replace")
+    except (HTTPError, URLError, OSError) as exc:  # pragma: no cover - defensive
+        raise requests.RequestException(str(exc)) from exc
+
+
+def _is_stub_network_error(exc: Exception) -> bool:
+    return "Network access disabled" in str(exc)
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8))
+def _http_get(url: str) -> str:
+    try:
+        return _fetch_with_requests(url)
+    except requests.RequestException as exc:
+        if _is_stub_network_error(exc):
+            LOGGER.info("requests stub detected, retrying download via urllib")
+            return _fetch_with_urllib(url)
+        raise
 
 
 def _latest_cached_file(base_dir: Path) -> Optional[Path]:
