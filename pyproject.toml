@@ -25,5 +25,8 @@ dev = [
   "pytest-cov"
 ]
 
+[tool.setuptools]
+packages = ["premarket"]
+
 [tool.pytest.ini_options]
 addopts = ""
