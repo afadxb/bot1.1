@@ -235,10 +235,18 @@ class DataFrame:
 
         if isinstance(data, list):
             rows: List[Dict[str, Any]]
-            if data and isinstance(data[0], dict):
+            if not data:
+                # Preserve explicit column ordering when provided; otherwise start empty.
+                self._columns = list(columns or [])
+                self._data = {col: Series([]) for col in self._columns}
+                self._index = []
+                return
+            if isinstance(data[0], dict):
                 rows = data
                 cols = columns or list(rows[0].keys())
-                all_cols: List[str] = list(dict.fromkeys([col for row in rows for col in row.keys()]))
+                all_cols: List[str] = list(
+                    dict.fromkeys([col for row in rows for col in row.keys()])
+                )
                 if columns is None:
                     columns = all_cols
                 values: Dict[str, List[Any]] = {col: [] for col in columns}
