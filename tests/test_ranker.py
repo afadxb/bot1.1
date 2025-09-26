@@ -62,6 +62,7 @@ def test_sector_diversity():
             "score": [0.9, 0.8, 0.7],
         }
     )
-    capped = ranker.apply_sector_diversity(df, top_n=3, max_fraction=0.5)
+    capped, trimmed = ranker.apply_sector_diversity(df, top_n=3, max_fraction=0.5)
     assert len(capped) <= 3
+    assert trimmed is True
     assert (capped["sector"] == "Tech").sum() <= 1

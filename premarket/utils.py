@@ -11,8 +11,18 @@ from typing import Any, Iterable, Optional
 
 from dateutil import tz
 from rich.logging import RichHandler
+from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
-EASTERN = tz.gettz("America/New_York")
+DEFAULT_TZ_NAME = "America/New_York"
+EASTERN = tz.gettz(DEFAULT_TZ_NAME)
+
+
+def configure_timezone(tz_name: str) -> None:
+    """Configure the default timezone used across the project."""
+
+    global EASTERN
+    resolved = tz.gettz(tz_name)
+    EASTERN = resolved if resolved is not None else tz.gettz(DEFAULT_TZ_NAME)
 
 
 def ensure_directory(path: Path) -> None:
@@ -120,9 +130,29 @@ def read_json(path: Path) -> Any:
 
 def redact_token(url: str) -> str:
     """Redact sensitive query parameters from a URL for logging."""
-    if "auth=" not in url:
+
+    if not url:
         return url
-    return url.split("auth=")[0] + "auth=***"
+
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return url
+
+    query_pairs = parse_qsl(parsed.query, keep_blank_values=True)
+    if not query_pairs:
+        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", parsed.fragment))
+
+    masked_pairs: list[str] = []
+    for key, value in query_pairs:
+        if key.lower() == "auth":
+            masked_pairs.append(f"{key}=***")
+        else:
+            placeholder = "<redacted>" if value else ""
+            masked_pairs.append(f"{key}={placeholder}" if placeholder else key)
+
+    masked_query = "&".join(masked_pairs)
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, masked_query, parsed.fragment))
 
 
 def env_str(key: str, default: Optional[str] = None) -> Optional[str]:

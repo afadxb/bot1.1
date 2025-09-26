@@ -94,9 +94,10 @@ def _parse_datetime(value: object) -> object:
         return None
 
 
-def coerce_types(df: pd.DataFrame) -> pd.DataFrame:
+def coerce_types(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     """Coerce numeric and date columns into typed values."""
     result = df.copy()
+    warnings = 0
 
     for col in set(result.columns) & FLOAT_COLUMNS:
         if col in PERCENT_COLUMNS:
@@ -137,30 +138,37 @@ def coerce_types(df: pd.DataFrame) -> pd.DataFrame:
 
     if "week52_range" in result.columns:
         result["week52_range"] = result["week52_range"].astype(str)
-        result["week52_pos"] = compute_week52_pos(result)
+        week_pos, warnings = compute_week52_pos(result)
+        result["week52_pos"] = week_pos
     else:
         result["week52_pos"] = np.nan
 
-    return result
+    return result, warnings
 
 
-def compute_week52_pos(df: pd.DataFrame) -> pd.Series:
+def compute_week52_pos(df: pd.DataFrame) -> tuple[pd.Series, int]:
     """Compute the position of price within the 52-week range."""
     prices = df.get("price")
     ranges = df.get("week52_range")
     if prices is None or ranges is None:
-        return pd.Series(np.nan, index=df.index)
+        return pd.Series(np.nan, index=df.index), 0
 
-    def _calc(row: pd.Series) -> float:
+    positions: list[float] = []
+    warnings = 0
+    for _, row in df.iterrows():
         price = utils.safe_float(row.get("price"))
         range_str = row.get("week52_range")
         parsed = utils.parse_range(range_str)
         if price is None or parsed is None:
-            return np.nan
+            warnings += 1
+            positions.append(0.5)
+            continue
         low, high = parsed
         if high <= low:
-            return np.nan
+            warnings += 1
+            positions.append(0.5)
+            continue
         position = (price - low) / (high - low)
-        return float(np.clip(position, 0.0, 1.0))
+        positions.append(float(np.clip(position, 0.0, 1.0)))
 
-    return df.apply(_calc, axis=1)
+    return pd.Series(positions, index=df.index, dtype=float), warnings

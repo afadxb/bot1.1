@@ -1,22 +1,55 @@
-"""CLI orchestration for the premarket workflow."""
+"""Runtime orchestration for the premarket workflow."""
 
 from __future__ import annotations
 
-import argparse
+import hashlib
 import logging
 import time
+from dataclasses import dataclass, field
+from datetime import date, datetime, time as dtime
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 import yaml
+from dateutil import tz
 from pydantic import BaseModel, Field
 
 from . import features, filters, loader_finviz, normalize, persist, ranker, utils
 from .news_probe import probe as news_probe
 
 LOGGER = logging.getLogger(__name__)
+
+_FEATURE_LABELS = {
+    "relvol": "RelVol",
+    "gap": "Gap",
+    "avgvol": "AvgVol",
+    "float_band": "FloatBand",
+    "short_float": "ShortFloat",
+    "after_hours": "AfterHours",
+    "change": "Change",
+    "w52pos": "52Wpos",
+    "news_fresh": "News",
+    "analyst": "Analyst",
+    "insider_inst": "Ins/Inst",
+}
+
+WATCHLIST_COLUMNS = [
+    "rank",
+    "symbol",
+    "score",
+    "tier",
+    "gap_pct",
+    "rel_volume",
+    "tags",
+    "Why",
+    "TopFeature1",
+    "TopFeature2",
+    "TopFeature3",
+    "TopFeature4",
+    "TopFeature5",
+]
 
 
 class WeightsModel(BaseModel):
@@ -56,6 +89,7 @@ class PremarketModel(BaseModel):
     weights: WeightsModel
     penalties: PenaltiesModel
     caps: CapsModel
+    weights_version: Optional[str] = None
 
 
 class NewsModel(BaseModel):
@@ -67,6 +101,49 @@ class StrategyConfig(BaseModel):
     premarket: PremarketModel
     news: NewsModel
 
+
+@dataclass
+class RunParams:
+    """Runtime settings derived from environment variables."""
+
+    config_path: Path
+    run_date: date
+    output_base_dir: Path = field(default_factory=lambda: Path("data/watchlists"))
+    top_n: Optional[int] = None
+    use_cache: bool = True
+    news_override: Optional[bool] = None
+    log_file: Optional[Path] = None
+    timezone: str = utils.DEFAULT_TZ_NAME
+    fail_on_empty: bool = False
+    max_per_sector: Optional[float] = None
+    env_overrides: List[str] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if isinstance(self.config_path, str):
+            self.config_path = Path(self.config_path)
+        if isinstance(self.output_base_dir, str):
+            self.output_base_dir = Path(self.output_base_dir)
+        if isinstance(self.log_file, str):
+            self.log_file = Path(self.log_file)
+        if isinstance(self.run_date, str):
+            self.run_date = date.fromisoformat(self.run_date)
+        if self.top_n is not None and self.top_n <= 0:
+            raise ValueError("top_n must be a positive integer")
+        if self.max_per_sector is not None and not (0 < self.max_per_sector <= 1):
+            raise ValueError("max_per_sector must be between 0 and 1")
+        if not self.timezone or tz.gettz(self.timezone) is None:
+            self.timezone = utils.DEFAULT_TZ_NAME
+        self.env_overrides = sorted(set(self.env_overrides))
+
+    def resolved_output_dir(self) -> Path:
+        path = self.output_base_dir / self.run_date.isoformat()
+        utils.ensure_directory(path)
+        return path
+
+    def resolved_log_file(self) -> Path:
+        if self.log_file is not None:
+            return self.log_file
+        return Path("logs") / f"premarket_{self.run_date.isoformat()}.log"
 
 def _load_config(path: Path) -> StrategyConfig:
     data = yaml.safe_load(path.read_text())
@@ -95,18 +172,15 @@ def _build_ranker_config(cfg: PremarketModel) -> ranker.RankerConfig:
     )
 
 
-def _determine_output_dir(base_dir: Optional[str], today: str) -> Path:
-    if base_dir:
-        path = Path(base_dir)
-    else:
-        path = Path("data/watchlists") / today
+def _determine_output_dir(base_dir: Path, today: str) -> Path:
+    path = base_dir / today
     utils.ensure_directory(path)
     return path
 
 
-def _determine_log_path(log_file: Optional[str], today: str) -> Path:
-    if log_file:
-        return Path(log_file)
+def _determine_log_path(log_file: Optional[Path], today: str) -> Path:
+    if log_file is not None:
+        return log_file
     return Path("logs") / f"premarket_{today}.log"
 
 
@@ -156,22 +230,105 @@ def _build_feature_dict(row: pd.Series) -> Dict[str, float]:
     return features_map
 
 
-def run(
-    cfg_path: str,
-    out_dir: Optional[str],
-    top_n: Optional[int],
-    use_cache: bool,
-    news_override: Optional[bool] = None,
-    log_file: Optional[str] = None,
-) -> int:
+def _feature_contributions(row: pd.Series, weights: ranker.RankerWeights) -> list[tuple[str, float]]:
+    contributions: list[tuple[str, float]] = []
+    for key, label in _FEATURE_LABELS.items():
+        column = f"f_{key}"
+        if column not in row:
+            continue
+        value = row.get(column)
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            contribution = 0.0
+        else:
+            weight = getattr(weights, key)
+            contribution = float(value) * float(weight)
+        contributions.append((label, contribution))
+    contributions.sort(key=lambda item: item[1], reverse=True)
+    return contributions
+
+
+def _timezone_label(tz_name: str, run_day: date) -> str:
+    tzinfo = tz.gettz(tz_name)
+    if tzinfo is None:
+        return tz_name
+    tz_dt = datetime.combine(run_day, dtime.min, tzinfo)
+    label = tz_dt.tzname() or tz_name
+    if label in {"EST", "EDT"}:
+        return "ET"
+    return label
+
+
+def _build_run_summary(
+    date_str: str,
+    cfg: StrategyConfig,
+    timings: Dict[str, float],
+    notes: list[str],
+    row_counts: Dict[str, int],
+    tier_counts: Dict[str, int],
+    env_overrides: List[str],
+    weights_version: Optional[str],
+    csv_hash: str,
+    used_cached_csv: bool,
+    sector_cap_applied: bool,
+    week52_warnings: int,
+) -> Dict[str, object]:
+    summary = {
+        "date": date_str,
+        "filters": cfg.premarket.model_dump(),
+        "timings_sec": {k: round(v, 3) for k, v in timings.items()},
+        "notes": notes,
+        "row_counts": row_counts,
+        "tiers": tier_counts,
+        "env_overrides_used": sorted(env_overrides),
+        "weights_version": weights_version or "default",
+        "csv_hash": csv_hash,
+        "sector_cap_applied": bool(sector_cap_applied),
+        "used_cached_csv": bool(used_cached_csv),
+        "week52_warning_count": int(week52_warnings),
+    }
+    return summary
+
+
+def _emit_empty_outputs(
+    output_dir: Path,
+    generated_at: str,
+    requested_top_n: int,
+    run_summary: Dict[str, object],
+) -> None:
+    persist.write_json([], output_dir / "full_watchlist.json")
+    persist.write_json(
+        {
+            "generated_at": generated_at,
+            "top_n": requested_top_n,
+            "symbols": [],
+            "ranking": [],
+        },
+        output_dir / "topN.json",
+    )
+    empty_table = pd.DataFrame(columns=WATCHLIST_COLUMNS)
+    persist.write_csv(empty_table, output_dir / "watchlist.csv")
+    persist.write_json(run_summary, output_dir / "run_summary.json")
+
+
+def _format_tier_counts(tier_counts: Dict[str, int]) -> str:
+    order = ["A", "B", "C"]
+    parts = []
+    for tier in order:
+        value = tier_counts.get(tier, 0)
+        parts.append(str(value) if value > 0 else "—")
+    return "/".join(parts)
+
+
+def run(params: RunParams) -> int:
     """Execute the full workflow."""
 
-    today = utils.now_eastern().date().isoformat()
-    log_path = _determine_log_path(log_file, today)
+    utils.configure_timezone(params.timezone)
+    today = params.run_date.isoformat()
+    log_path = _determine_log_path(params.log_file, today)
     logger = utils.setup_logging(log_path)
 
     try:
-        cfg = _load_config(Path(cfg_path))
+        cfg = _load_config(Path(params.config_path))
     except Exception as exc:  # pragma: no cover - config errors
         logger.error("Failed to load config: %s", exc)
         return 1
@@ -181,12 +338,16 @@ def run(
         logger.error("FINVIZ_EXPORT_URL is not set. Provide the export URL with auth token.")
         return 3
 
-    news_enabled = news_override if news_override is not None else cfg.news.enabled
+    top_n_value = params.top_n if params.top_n is not None else cfg.premarket.top_n
+    max_per_sector = (
+        params.max_per_sector if params.max_per_sector is not None else cfg.premarket.max_per_sector
+    )
+
+    news_enabled = params.news_override if params.news_override is not None else cfg.news.enabled
     news_cfg = cfg.news.copy()
     news_cfg.enabled = bool(news_enabled)
 
-    output_dir = _determine_output_dir(out_dir, today)
-
+    output_dir = _determine_output_dir(params.output_base_dir, today)
     raw_csv_path = Path("data/raw") / today / "finviz_elite.csv"
 
     timings: Dict[str, float] = {}
@@ -194,7 +355,7 @@ def run(
 
     start = time.perf_counter()
     try:
-        csv_path = loader_finviz.download_csv(finviz_url, raw_csv_path, use_cache=use_cache)
+        csv_path = loader_finviz.download_csv(finviz_url, raw_csv_path, use_cache=params.use_cache)
     except RuntimeError:
         logger.error("Failed to download CSV and no cache available.")
         return 3
@@ -202,19 +363,60 @@ def run(
     used_cached_csv = csv_path != raw_csv_path
     notes.append(f"used_cached_csv: {used_cached_csv}")
 
+    try:
+        csv_hash = hashlib.sha256(csv_path.read_bytes()).hexdigest()
+    except OSError:
+        csv_hash = ""
+        logger.warning("Unable to hash CSV at %s", csv_path)
+
     start = time.perf_counter()
     df = loader_finviz.read_csv(csv_path)
     raw_rows = len(df)
     df = normalize.normalize_columns(df)
-    df = normalize.coerce_types(df)
+    df, week52_warnings = normalize.coerce_types(df)
+    if week52_warnings:
+        notes.append(f"week52_warnings: {week52_warnings}")
     timings["normalize"] = time.perf_counter() - start
 
     filter_cfg = _build_filter_config(cfg.premarket)
     qualified_df, rejected_df = filters.apply_hard_filters(df, filter_cfg)
 
+    row_counts = {
+        "raw": int(raw_rows),
+        "qualified": int(len(qualified_df)),
+        "rejected": int(len(rejected_df)),
+        "topN": 0,
+    }
+
+    generated_at = utils.timestamp_iso()
+    weights_version = cfg.premarket.weights_version or "default"
+
     if qualified_df.empty:
         logger.warning("No candidates qualified after filters.")
-        return 2
+        run_summary = _build_run_summary(
+            today,
+            cfg,
+            timings,
+            notes,
+            row_counts,
+            {},
+            params.env_overrides,
+            weights_version,
+            csv_hash,
+            used_cached_csv,
+            False,
+            week52_warnings,
+        )
+        _emit_empty_outputs(output_dir, generated_at, top_n_value, run_summary)
+        empty_tiers: Dict[str, int] = {}
+        tier_display = _format_tier_counts(empty_tiers)
+        summary_line = (
+            f"Date={today} {_timezone_label(params.timezone, params.run_date)} | "
+            f"TopN=0 | A/B/C={tier_display} | SectorCap=False | "
+            f"Cache={used_cached_csv} | Out={output_dir}"
+        )
+        logger.info(summary_line)
+        return 2 if params.fail_on_empty else 0
 
     start = time.perf_counter()
     symbols = qualified_df.get("ticker", pd.Series(dtype=str)).fillna("").astype(str).tolist()
@@ -233,19 +435,54 @@ def run(
         by=["score", "turnover_dollar", "ticker"], ascending=[False, False, True], inplace=True
     )
 
-    top_n_value = top_n if top_n is not None else cfg.premarket.top_n
-    diversified_df = ranker.apply_sector_diversity(
-        featured_df, top_n=top_n_value, max_fraction=cfg.premarket.max_per_sector
+    diversified_df, sector_trimmed = ranker.apply_sector_diversity(
+        featured_df, top_n=top_n_value, max_fraction=max_per_sector
     )
 
     if diversified_df.empty:
         logger.warning("No symbols selected after sector diversity constraint.")
-        return 2
+        run_summary = _build_run_summary(
+            today,
+            cfg,
+            timings,
+            notes,
+            row_counts,
+            {},
+            params.env_overrides,
+            weights_version,
+            csv_hash,
+            used_cached_csv,
+            sector_trimmed,
+            week52_warnings,
+        )
+        _emit_empty_outputs(output_dir, generated_at, top_n_value, run_summary)
+        empty_tiers = {}
+        tier_display = _format_tier_counts(empty_tiers)
+        summary_line = (
+            f"Date={today} {_timezone_label(params.timezone, params.run_date)} | "
+            f"TopN=0 | A/B/C={tier_display} | SectorCap={sector_trimmed} | "
+            f"Cache={used_cached_csv} | Out={output_dir}"
+        )
+        logger.info(summary_line)
+        return 2 if params.fail_on_empty else 0
 
-    diversified_df = diversified_df.head(top_n_value)
-    diversified_df = diversified_df.copy()
+    diversified_df = diversified_df.head(top_n_value).copy()
     diversified_df["rank"] = range(1, len(diversified_df) + 1)
     diversified_df["tags"] = diversified_df.apply(_tags_for_row, axis=1)
+
+    rank_weights = rank_cfg.weights
+    why_values: list[str] = []
+    feature_columns: dict[int, list[str]] = {idx: [] for idx in range(1, 6)}
+    for _, row in diversified_df.iterrows():
+        contributions = _feature_contributions(row, rank_weights)
+        positive_labels = [label for label, value in contributions if value > 0][:3]
+        why_values.append(" + ".join(positive_labels) if positive_labels else "—")
+        for idx in range(5):
+            if idx < len(contributions):
+                label, value = contributions[idx]
+                feature_columns[idx + 1].append(f"{label}={value:.3f}")
+            else:
+                feature_columns[idx + 1].append("")
 
     generated_at = utils.timestamp_iso()
 
@@ -308,57 +545,40 @@ def run(
     watchlist_table = diversified_df[
         ["rank", "ticker", "score", "tier", "gap_pct", "rel_volume", "tags"]
     ].rename(columns={"ticker": "symbol"})
+    watchlist_table = watchlist_table.copy()
+    watchlist_table["Why"] = why_values
+    for idx, values in feature_columns.items():
+        watchlist_table[f"TopFeature{idx}"] = values
     persist.write_csv(watchlist_table, output_dir / "watchlist.csv")
     timings["persist"] = time.perf_counter() - start
 
     tier_counts = diversified_df["tier"].value_counts().to_dict()
+    row_counts["topN"] = int(len(diversified_df))
 
-    run_summary = {
-        "date": today,
-        "raw_rows": int(raw_rows),
-        "qualified": int(len(featured_df)),
-        "top_n": int(len(diversified_df)),
-        "filters": cfg.premarket.model_dump(),
-        "timings_sec": {k: round(v, 3) for k, v in timings.items()},
-        "notes": notes,
-        "tiers": tier_counts,
-    }
+    run_summary = _build_run_summary(
+        today,
+        cfg,
+        timings,
+        notes,
+        row_counts,
+        tier_counts,
+        params.env_overrides,
+        weights_version,
+        csv_hash,
+        used_cached_csv,
+        sector_trimmed,
+        week52_warnings,
+    )
     persist.write_json(run_summary, output_dir / "run_summary.json")
 
-    logger.info(
-        "Qualified: %s | Top-%s done | Using cache: %s | Tiers %s | Out: %s",
-        len(featured_df),
-        top_n_value,
-        used_cached_csv,
-        tier_counts,
-        output_dir,
+    summary_line = (
+        f"Date={today} {_timezone_label(params.timezone, params.run_date)} | "
+        f"TopN={row_counts['topN']} | A/B/C={_format_tier_counts(tier_counts)} | "
+        f"SectorCap={sector_trimmed} | Cache={used_cached_csv} | Out={output_dir}"
     )
+    logger.info(summary_line)
 
     return 0
 
 
-def _parse_args(args: Optional[list[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Premarket Top-N watchlist generator")
-    parser.add_argument("--config", required=True, help="Path to strategy YAML config")
-    parser.add_argument("--out", required=False, help="Output directory")
-    parser.add_argument("--top-n", type=int, required=False, help="Override Top-N value")
-    parser.add_argument("--use-cache", type=lambda x: x.lower() == "true", default=True)
-    parser.add_argument("--news", type=lambda x: x.lower() == "true", required=False)
-    parser.add_argument("--log-file", required=False)
-    return parser.parse_args(args=args)
-
-
-def main(argv: Optional[list[str]] = None) -> int:
-    args = _parse_args(argv)
-    return run(
-        cfg_path=args.config,
-        out_dir=args.out,
-        top_n=args.top_n,
-        use_cache=args.use_cache,
-        news_override=args.news,
-        log_file=args.log_file,
-    )
-
-
-if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(main())
+__all__ = ["RunParams", "run"]

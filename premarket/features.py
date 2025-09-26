@@ -67,8 +67,22 @@ def _after_hours_score(change: Any, day_change: Any) -> float:
 def _short_float_score(value: Any) -> float:
     pct = utils.safe_percent(value)
     if pct is None:
-        return 0.0
-    return float(np.clip((pct - 5) / (20 - 5), 0.0, 1.0))
+        return 0.5
+
+    lower = 5.0
+    upper = 20.0
+    sweet_mid = (lower + upper) / 2
+    half_width = (upper - lower) / 2
+
+    if pct < lower:
+        return float(np.clip(pct / lower * 0.5, 0.0, 0.5))
+    if pct > upper:
+        decay = max(0.0, 1 - (pct - upper) / 20)
+        return float(np.clip(decay * 0.6, 0.0, 1.0))
+
+    distance = abs(pct - sweet_mid)
+    normalized = 1 - (distance / half_width) ** 2
+    return float(np.clip(normalized, 0.0, 1.0))
 
 
 def _analyst_score(value: Any) -> float:
