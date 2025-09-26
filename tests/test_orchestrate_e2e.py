@@ -1,9 +1,9 @@
 import json
 from pathlib import Path
 
-import pandas as pd
-
 from datetime import date
+
+import pandas as pd
 
 from premarket import orchestrate
 
@@ -134,3 +134,41 @@ def test_orchestrate_end_to_end(tmp_path, monkeypatch):
     assert run_summary["row_counts"]["topN"] == 2
     assert "csv_hash" in run_summary
     assert run_summary["env_overrides_used"] == sorted(params.env_overrides)
+
+
+def test_run_emits_empty_outputs_when_download_fails(tmp_path, monkeypatch):
+    monkeypatch.setenv("FINVIZ_EXPORT_URL", "https://example.com/export")
+    out_base = tmp_path / "out"
+    run_date = date(2024, 1, 2)
+
+    def boom(*_, **__):
+        raise RuntimeError("network disabled")
+
+    monkeypatch.setattr(orchestrate.loader_finviz, "download_csv", boom)
+
+    params = orchestrate.RunParams(
+        config_path=Path("config/strategy.yaml"),
+        output_base_dir=out_base,
+        use_cache=True,
+        news_override=False,
+        run_date=run_date,
+        timezone="America/New_York",
+    )
+
+    exit_code = orchestrate.run(params)
+
+    assert exit_code == 0
+
+    out_dir = out_base / run_date.isoformat()
+    assert (out_dir / "full_watchlist.json").exists()
+    assert (out_dir / "topN.json").exists()
+    assert (out_dir / "watchlist.csv").exists()
+    assert (out_dir / "run_summary.json").exists()
+
+    topn = json.loads((out_dir / "topN.json").read_text())
+    assert topn["symbols"] == []
+
+    summary = json.loads((out_dir / "run_summary.json").read_text())
+    assert summary["row_counts"] == {"raw": 0, "qualified": 0, "rejected": 0, "topN": 0}
+    assert "download_failed_no_cache" in summary["notes"]
+    assert summary["used_cached_csv"] is False
