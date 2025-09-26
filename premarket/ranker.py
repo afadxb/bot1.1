@@ -122,12 +122,16 @@ def assign_tiers(scores: pd.Series) -> pd.Series:
     return scores.map(_tier)
 
 
-def apply_sector_diversity(df: pd.DataFrame, top_n: int, max_fraction: float) -> pd.DataFrame:
-    """Apply sector diversity cap returning a limited DataFrame."""
+def apply_sector_diversity(
+    df: pd.DataFrame, top_n: int, max_fraction: float
+) -> tuple[pd.DataFrame, bool]:
+    """Apply sector diversity cap returning a limited DataFrame and a trim flag."""
+
+    trimmed = False
     if top_n <= 0:
-        return df.head(0)
+        return df.head(0), trimmed
     if max_fraction <= 0:
-        return df.head(top_n)
+        return df.head(top_n), trimmed
     max_per_sector = max(1, math.floor(top_n * max_fraction))
     counts: dict[str, int] = {}
     selected_indices: list[int] = []
@@ -142,7 +146,9 @@ def apply_sector_diversity(df: pd.DataFrame, top_n: int, max_fraction: float) ->
             if current < max_per_sector:
                 counts[key] = current + 1
                 selected_indices.append(idx)
+            else:
+                trimmed = True
         if len(selected_indices) >= top_n:
             break
 
-    return df.loc[selected_indices]
+    return df.loc[selected_indices], trimmed

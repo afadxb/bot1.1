@@ -19,11 +19,11 @@ def test_normalize_columns_and_types():
     normalized = normalize.normalize_columns(df)
     assert "rel_volume" in normalized.columns
 
-    coerced = normalize.coerce_types(normalized)
+    coerced, warnings = normalize.coerce_types(normalized)
     assert coerced.loc[0, "rel_volume"] == 1.8
     assert coerced.loc[0, "avg_volume_3m"] == 1_500_000
     assert round(coerced.loc[0, "change_pct"], 2) == 5.0
     assert round(coerced.loc[0, "gap_pct"], 2) == round((18.5 - 17.5) / 17.5 * 100, 2)
 
-    week_pos = normalize.compute_week52_pos(coerced)
-    assert 0.0 <= week_pos.iloc[0] <= 1.0
+    assert 0.0 <= coerced.loc[0, "week52_pos"] <= 1.0
+    assert warnings == 0

@@ -3,6 +3,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from datetime import date
+
 from premarket import orchestrate
 
 
@@ -97,17 +99,24 @@ def test_orchestrate_end_to_end(tmp_path, monkeypatch):
 
     monkeypatch.setattr(orchestrate.loader_finviz, "download_csv", lambda url, out_path, use_cache: csv_path)
 
-    out_dir = tmp_path / "out"
-    code = orchestrate.run(
-        cfg_path="config/strategy.yaml",
-        out_dir=str(out_dir),
+    run_date = date(2024, 1, 2)
+    out_base = tmp_path / "out"
+    params = orchestrate.RunParams(
+        config_path=Path("config/strategy.yaml"),
+        output_base_dir=out_base,
         top_n=2,
         use_cache=True,
         news_override=False,
-        log_file=str(tmp_path / "run.log"),
+        log_file=tmp_path / "run.log",
+        run_date=run_date,
+        timezone="America/New_York",
+        env_overrides=["PREMARKET_TOP_N"],
     )
 
+    code = orchestrate.run(params)
+
     assert code == 0
+    out_dir = out_base / run_date.isoformat()
     assert (out_dir / "full_watchlist.json").exists()
     assert (out_dir / "topN.json").exists()
     assert (out_dir / "watchlist.csv").exists()
@@ -116,3 +125,12 @@ def test_orchestrate_end_to_end(tmp_path, monkeypatch):
     topn = json.loads((out_dir / "topN.json").read_text())
     assert topn["top_n"] == 2
     assert len(topn["symbols"]) == 2
+
+    watchlist_df = pd.read_csv(out_dir / "watchlist.csv")
+    assert "Why" in watchlist_df.columns
+    assert "TopFeature5" in watchlist_df.columns
+
+    run_summary = json.loads((out_dir / "run_summary.json").read_text())
+    assert run_summary["row_counts"]["topN"] == 2
+    assert "csv_hash" in run_summary
+    assert run_summary["env_overrides_used"] == sorted(params.env_overrides)
