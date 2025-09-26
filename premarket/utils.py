@@ -174,11 +174,26 @@ def env_str(key: str, default: Optional[str] = None) -> Optional[str]:
     if not stripped or stripped.startswith("#"):
         return default
 
-    for marker in (" #", "\t#"):
-        comment_index = stripped.find(marker)
-        if comment_index != -1:
-            stripped = stripped[:comment_index].rstrip()
+    comment_index: Optional[int] = None
+    for idx, char in enumerate(stripped):
+        if char == "#" and (idx == 0 or stripped[idx - 1].isspace()):
+            comment_index = idx
             break
+
+    if comment_index is not None:
+        stripped = stripped[:comment_index].rstrip()
+
+    if not stripped:
+        return default
+
+    if stripped[0] in {'"', "'"} and stripped[-1] == stripped[0]:
+        stripped = stripped[1:-1]
+    else:
+        if stripped and stripped[0] in {'"', "'"} and stripped.count(stripped[0]) == 1:
+            stripped = stripped[1:]
+        if stripped and stripped[-1] in {'"', "'"} and stripped.count(stripped[-1]) == 1:
+            stripped = stripped[:-1]
+
 
     return stripped or default
 

@@ -27,3 +27,13 @@ def test_env_str_preserves_hash_in_value(monkeypatch):
     url = "https://example.com/path/#fragment"
     monkeypatch.setenv("URL_VALUE", url)
     assert utils.env_str("URL_VALUE") == url
+
+def test_env_str_trims_wrapping_quotes(monkeypatch):
+    monkeypatch.setenv("QUOTED", '"logs/premarket.log"')
+    assert utils.env_str("QUOTED") == "logs/premarket.log"
+
+
+def test_env_str_discards_dangling_quote_after_comment(monkeypatch):
+    monkeypatch.setenv("DANGLING", 'data/watchlists"      # auto-appends')
+    assert utils.env_str("DANGLING") == "data/watchlists"
+
