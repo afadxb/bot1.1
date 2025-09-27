@@ -29,6 +29,17 @@ def test_normalize_columns_and_types():
     assert warnings == 0
 
 
+def test_gap_column_maps_to_gap_percent():
+    df = pd.DataFrame({"Ticker": ["AAA"], "Gap": ["4%"]})
+
+    normalized = normalize.normalize_columns(df)
+    assert "gap_pct" in normalized.columns
+
+    coerced, _ = normalize.coerce_types(normalized)
+    assert coerced.loc[0, "gap_pct"] == 4.0
+
+
+
 def test_coerce_types_parses_suffixes():
     df = pd.DataFrame(
         {
@@ -36,7 +47,6 @@ def test_coerce_types_parses_suffixes():
             "Average Volume (3M)": ["850K"],
             "Float": ["1.4B"],
             "Float %": ["65%"],
-
             "Short Float": ["12.5%"],
         }
     )

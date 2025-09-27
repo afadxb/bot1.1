@@ -38,7 +38,6 @@ _CANONICAL_MAP = {
     "insider_transactions": ["insider transactions"],
     "institutional_transactions": ["institutional transactions"],
     "previous_close": ["previous close", "prev close"],
-    "gap": ["gap"],
 }
 
 for canonical, aliases in _CANONICAL_MAP.items():
