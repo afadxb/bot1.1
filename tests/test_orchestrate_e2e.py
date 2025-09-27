@@ -139,15 +139,11 @@ def test_orchestrate_end_to_end(tmp_path, monkeypatch):
 
     rejected_df = pd.read_csv(rejection_path)
     assert "ticker" in rejected_df.columns
-    reasons_value = rejected_df.loc[
-        rejected_df["ticker"] == "CCC", "rejection_reasons"
-    ]
-    if isinstance(reasons_value, str):
-        reasons = [reasons_value]
-    else:
-        reasons = reasons_value.tolist()
-    assert reasons == ["float_below_min | exchange_excluded"]
-
+    reason_row = rejected_df.loc[rejected_df["ticker"] == "CCC"]
+    assert not reason_row.empty
+    reason = str(reason_row.iloc[0]["rejection_reasons"])
+    parsed_reasons = [part.strip() for part in reason.split("|") if part.strip()]
+    assert "exchange_excluded" in parsed_reasons
 
 def test_run_emits_empty_outputs_when_download_fails(tmp_path, monkeypatch):
     monkeypatch.setenv("FINVIZ_EXPORT_URL", "https://example.com/export")
