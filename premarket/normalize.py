@@ -26,7 +26,7 @@ _CANONICAL_MAP = {
     "change_pct": ["change", "% change", "change %"],
     "gap_pct": ["gap", "gap %", "% gap"],
     "volume": ["volume"],
-    "avg_volume_3m": ["average volume (3m)", "avg volume", "avg volume (3m)"],
+    "avg_volume_3m": ["average volume", "avg volume", "avg volume (3m)"],
     "rel_volume": ["relative volume", "rel volume", "relative vol."],
     "float_shares": ["float", "float shares", "shares float", "float/shares", "float/outstanding"],
     "float_pct": ["float %", "float pct", "float percentage", "float_%"],

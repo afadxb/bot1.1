@@ -39,6 +39,7 @@ def test_gap_column_maps_to_gap_percent():
     assert coerced.loc[0, "gap_pct"] == 4.0
 
 
+
 def test_coerce_types_parses_suffixes():
     df = pd.DataFrame(
         {
