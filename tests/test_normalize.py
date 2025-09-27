@@ -35,6 +35,8 @@ def test_coerce_types_parses_suffixes():
             "Ticker": ["ZZZ"],
             "Average Volume (3M)": ["850K"],
             "Float": ["1.4B"],
+            "Float %": ["65%"],
+
             "Short Float": ["12.5%"],
         }
     )
@@ -44,5 +46,6 @@ def test_coerce_types_parses_suffixes():
 
     assert coerced.loc[0, "avg_volume_3m"] == 850_000
     assert coerced.loc[0, "float_shares"] == 1_400_000_000
+    assert coerced.loc[0, "float_pct"] == 65.0
     assert coerced.loc[0, "short_float_pct"] == 12.5
     assert warnings == 0
