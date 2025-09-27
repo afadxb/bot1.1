@@ -23,6 +23,13 @@ pip install -e .[dev]
 python -m premarket
 ```
 
+When you need a traditional script entry point (for IDE debuggers, for example),
+invoke the mirrored wrapper instead:
+
+```bash
+python premarket_script.py
+```
+
 CLI flags are optional—any provided values override `.env` settings.
 
 On success, the following files appear under `PREMARKET_OUT_DIR/<YYYY-MM-DD>`:
