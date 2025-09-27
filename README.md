@@ -23,6 +23,13 @@ pip install -e .[dev]
 python -m premarket
 ```
 
+When you need a traditional script entry point (for IDE debuggers, for example),
+invoke the mirrored wrapper instead:
+
+```bash
+python premarket_script.py
+```
+
 CLI flags are optional—any provided values override `.env` settings.
 
 On success, the following files appear under `PREMARKET_OUT_DIR/<YYYY-MM-DD>`:
@@ -55,7 +62,7 @@ FINVIZ_EXPORT_URL="https://elite.finviz.com/export.ashx?...&auth=..."
 PREMARKET_CONFIG_PATH="config/strategy.yaml"
 PREMARKET_OUT_DIR="data/watchlists"      # YYYY-MM-DD is auto-appended
 PREMARKET_TOP_N=20                        # override YAML top_n
-PREMARKET_USE_CACHE=true                  # reuse downloads within CACHE_TTL_MIN
+PREMARKET_USE_CACHE=true                  # allow fallback to cached CSV if download fails
 PREMARKET_NEWS_ENABLED=false              # force news probe on/off
 PREMARKET_MAX_PER_SECTOR=0.4              # optional sector cap override
 PREMARKET_LOG_FILE="logs/premarket.log"  # defaults to logs/premarket_<date>.log
