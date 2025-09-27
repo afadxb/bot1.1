@@ -5,6 +5,17 @@ from __future__ import annotations
 from premarket import utils
 
 
+def test_safe_int_handles_finviz_suffixes():
+    assert utils.safe_int("850K") == 850_000
+    assert utils.safe_int("1.4M") == 1_400_000
+    assert utils.safe_int("2.5B") == 2_500_000_000
+
+
+def test_safe_int_handles_percent_strings():
+    assert utils.safe_int("65%") == 65
+    assert utils.safe_int(" 99.73% ") == 99
+
+
 def test_env_str_returns_default_when_missing(monkeypatch):
     monkeypatch.delenv("SOME_KEY", raising=False)
     assert utils.env_str("SOME_KEY", "fallback") == "fallback"

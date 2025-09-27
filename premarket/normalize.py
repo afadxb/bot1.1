@@ -28,7 +28,8 @@ _CANONICAL_MAP = {
     "volume": ["volume"],
     "avg_volume_3m": ["average volume (3m)", "avg volume", "avg volume (3m)"],
     "rel_volume": ["relative volume", "rel volume", "relative vol."],
-    "float_shares": ["float", "shares float", "float/shares", "float/outstanding"],
+    "float_shares": ["float", "float shares", "shares float", "float/shares", "float/outstanding"],
+    "float_pct": ["float %", "float pct", "float percentage", "float_%"],
     "short_float_pct": ["short float", "short float %"],
     "after_hours_change_pct": ["after-hours change", "after hours change", "after-hours change %"],
     "week52_range": ["52-week range", "52w range"],
@@ -54,6 +55,7 @@ FLOAT_COLUMNS = {
     "pe",
     "after_hours_change_pct",
     "short_float_pct",
+    "float_pct",
 }
 
 INT_COLUMNS = {
@@ -67,6 +69,7 @@ PERCENT_COLUMNS = {
     "gap_pct",
     "short_float_pct",
     "after_hours_change_pct",
+    "float_pct",
 }
 
 
