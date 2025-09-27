@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+
 from pathlib import Path
 
 from premarket import __main__ as cli
@@ -31,7 +32,6 @@ def test_main_trims_commented_output_dir_env(monkeypatch, tmp_path):
     assert exit_code == 0
     assert captured["output_dir"] == Path("data/watchlists")
 
-
 def test_root_main_run_delegates_to_cli(monkeypatch):
     from premarket import __main__ as cli
     import importlib
@@ -53,3 +53,4 @@ def test_root_main_run_delegates_to_cli(monkeypatch):
 
     assert exit_code == 42
     assert captured["argv"] == ["--demo"]
+
