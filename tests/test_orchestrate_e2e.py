@@ -117,10 +117,12 @@ def test_orchestrate_end_to_end(tmp_path, monkeypatch):
 
     assert code == 0
     out_dir = out_base / run_date.isoformat()
+    rejection_path = csv_path.with_name("finviz_reject.csv")
     assert (out_dir / "full_watchlist.json").exists()
     assert (out_dir / "topN.json").exists()
     assert (out_dir / "watchlist.csv").exists()
     assert (out_dir / "run_summary.json").exists()
+    assert rejection_path.exists()
 
     topn = json.loads((out_dir / "topN.json").read_text())
     assert topn["top_n"] == 2
@@ -134,6 +136,17 @@ def test_orchestrate_end_to_end(tmp_path, monkeypatch):
     assert run_summary["row_counts"]["topN"] == 2
     assert "csv_hash" in run_summary
     assert run_summary["env_overrides_used"] == sorted(params.env_overrides)
+
+    rejected_df = pd.read_csv(rejection_path)
+    assert "ticker" in rejected_df.columns
+    reasons_value = rejected_df.loc[
+        rejected_df["ticker"] == "CCC", "rejection_reasons"
+    ]
+    if isinstance(reasons_value, str):
+        reasons = [reasons_value]
+    else:
+        reasons = reasons_value.tolist()
+    assert reasons == ["float_below_min | exchange_excluded"]
 
 
 def test_run_emits_empty_outputs_when_download_fails(tmp_path, monkeypatch):
