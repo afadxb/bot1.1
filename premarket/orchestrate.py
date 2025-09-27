@@ -95,6 +95,9 @@ class PremarketModel(BaseModel):
 class NewsModel(BaseModel):
     enabled: bool = False
     freshness_hours: int = 24
+    finviz_url: Optional[str] = None
+    finnhub_token: Optional[str] = None
+    finnhub_days: int = 3
 
 
 class StrategyConfig(BaseModel):

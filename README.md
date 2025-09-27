@@ -50,6 +50,13 @@ Strategy defaults live in `config/strategy.yaml`. Tune the thresholds and weight
 - Sector diversification ratio (`max_per_sector`).
 - Optional news settings (disabled by default).
 
+Enabling the news feature (`news.enabled=true`) lets the ranker incorporate
+headline freshness. Provide a Finviz Elite news export URL (`FINVIZ_NEWS_EXPORT_URL`)
+and/or a Finnhub API token (`FINNHUB_API_KEY`). Finviz is queried once for all
+symbols via the CSV export, while Finnhub provides per-symbol stories using the
+free `company-news` endpoint. The fresher headline between both providers is
+used to score each ticker.
+
 Override the Top-N size via `.env` (`PREMARKET_TOP_N`) or edit `premarket.top_n` in the config.
 
 ### `.env` example
@@ -57,6 +64,12 @@ Override the Top-N size via `.env` (`PREMARKET_TOP_N`) or edit `premarket.top_n`
 ```dotenv
 # Required Finviz export URL (auth token is automatically redacted in logs)
 FINVIZ_EXPORT_URL="https://elite.finviz.com/export.ashx?...&auth=..."
+
+# Optional news integrations
+# Provide the Finviz Elite news export URL (news_export.ashx) with your auth token
+FINVIZ_NEWS_EXPORT_URL="https://elite.finviz.com/news_export.ashx?v=3&auth=..."
+# Supply your free Finnhub token to augment symbol-specific news lookups
+FINNHUB_API_KEY="your-finnhub-token"
 
 # Runtime overrides (all optional)
 PREMARKET_CONFIG_PATH="config/strategy.yaml"
