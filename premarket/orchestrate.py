@@ -421,11 +421,12 @@ def run(params: RunParams) -> int:
     persist.write_csv(rejected_for_csv, rejection_report_path)
 
     row_counts = {
-        "raw": int(raw_rows),
-        "qualified": int(len(qualified_df)),
-        "rejected": int(len(rejected_df)),
+        "raw": int(raw_rows) if "raw_rows" in locals() else 0,
+        "qualified": int(len(qualified_df)) if "qualified_df" in locals() else 0,
+        "rejected": int(len(rejected_df)) if "rejected_df" in locals() else 0,
         "topN": 0,
     }
+    logger.info(row_counts)
 
     generated_at = utils.timestamp_iso()
 

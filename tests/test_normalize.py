@@ -36,6 +36,7 @@ def test_coerce_types_parses_suffixes():
             "Average Volume (3M)": ["850K"],
             "Float": ["1.4B"],
             "Float %": ["65%"],
+
             "Short Float": ["12.5%"],
         }
     )
