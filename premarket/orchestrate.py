@@ -409,6 +409,17 @@ def run(params: RunParams) -> int:
     filter_cfg = _build_filter_config(cfg.premarket)
     qualified_df, rejected_df = filters.apply_hard_filters(df, filter_cfg)
 
+    rejection_report_path = csv_path.with_name("finviz_reject.csv")
+    utils.ensure_directory(rejection_report_path.parent)
+    rejected_for_csv = rejected_df.copy()
+    if "rejection_reasons" in rejected_for_csv.columns:
+        rejected_for_csv["rejection_reasons"] = rejected_for_csv["rejection_reasons"].apply(
+            lambda reasons: " | ".join(map(str, reasons))
+            if isinstance(reasons, (list, tuple))
+            else ("" if pd.isna(reasons) else str(reasons))
+        )
+    persist.write_csv(rejected_for_csv, rejection_report_path)
+
     row_counts = {
         "raw": int(raw_rows),
         "qualified": int(len(qualified_df)),
