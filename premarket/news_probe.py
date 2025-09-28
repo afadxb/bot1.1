@@ -104,6 +104,9 @@ def _clean_datetime_string(value: str) -> str:
 _FINVIZ_DATETIME_FORMATS = [
     "%m/%d/%Y %I:%M %p",
     "%m/%d/%y %I:%M %p",
+    "%m/%d/%Y %H:%M",
+    "%m/%d/%y %H:%M",
+
     "%Y-%m-%d %H:%M:%S",
     "%Y-%m-%d %H:%M",
     "%Y-%m-%dT%H:%M:%S",

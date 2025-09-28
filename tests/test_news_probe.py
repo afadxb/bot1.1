@@ -82,3 +82,28 @@ def test_probe_prefers_latest_timestamp(monkeypatch):
 
     assert result["DDD"]["category"] == "finnhub"
     assert math.isclose(result["DDD"]["freshness_hours"], 0.5, rel_tol=1e-6)
+
+def test_probe_handles_finviz_24_hour_datetime(monkeypatch):
+    cfg = NewsModel(enabled=True, freshness_hours=24, finviz_url="https://elite.finviz.com/news_export.ashx?v=3")
+
+    now = datetime(2025, 9, 27, 16, 0, tzinfo=utils.EASTERN)
+    monkeypatch.setattr(news_probe.utils, "now_eastern", lambda: now)
+
+    csv_content = (
+        "Title,Source,Date,Url,Category,Ticker\n"
+        "AI Race Analysis,Benzinga,9/27/2025 15:11,https://example.com,Stock,\"GOOG,GOOGL\"\n"
+    )
+
+    def fake_http_get(url: str) -> str:
+        assert "news_export" in url
+        return csv_content
+
+    monkeypatch.setattr(news_probe, "_http_get", fake_http_get)
+
+    result = news_probe.probe(["goog", "googl", "msft"], cfg)
+
+    assert result["GOOG"]["category"] == "finviz"
+    assert result["GOOGL"]["category"] == "finviz"
+    assert math.isclose(result["GOOG"]["freshness_hours"], 0.8166666, rel_tol=1e-6)
+    assert result["MSFT"]["freshness_hours"] is None
+
