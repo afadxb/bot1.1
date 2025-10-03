@@ -6,6 +6,7 @@ import json
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, Iterable
+from typing import Any, Dict, Sequence, Tuple
 
 import pandas as pd
 
