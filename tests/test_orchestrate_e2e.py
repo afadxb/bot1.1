@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from pathlib import Path
 
 from datetime import date
@@ -94,6 +95,10 @@ def _sample_csv(path: Path) -> None:
 
 
 def test_orchestrate_end_to_end(tmp_path, monkeypatch):
+    db_path = Path("premarket.db")
+    if db_path.exists():
+        db_path.unlink()
+
     csv_path = tmp_path / "finviz.csv"
     _sample_csv(csv_path)
 
@@ -130,6 +135,7 @@ def test_orchestrate_end_to_end(tmp_path, monkeypatch):
     topn = json.loads((out_dir / "topN.json").read_text())
     assert topn["top_n"] == 2
     assert len(topn["symbols"]) == 2
+    top_symbols_list = topn["symbols"]
 
     watchlist_df = pd.read_csv(out_dir / "watchlist.csv")
     assert "Why" in watchlist_df.columns
@@ -148,8 +154,59 @@ def test_orchestrate_end_to_end(tmp_path, monkeypatch):
     parsed_reasons = [part.strip() for part in reason.split("|") if part.strip()]
     assert "exchange_excluded" in parsed_reasons
 
+    assert db_path.exists()
+    with sqlite3.connect(db_path) as conn:
+        full_rows = conn.execute(
+            "SELECT symbol, score FROM full_watchlist WHERE run_date = ?",
+            (run_date.isoformat(),),
+        ).fetchall()
+        assert full_rows
+        first_symbol, first_score = full_rows[0]
+        assert first_symbol in {"AAA", "BBB"}
+        assert first_score is not None
+
+        top_rows = conn.execute(
+            "SELECT rank, symbol, score FROM top_n WHERE run_date = ? ORDER BY rank",
+            (run_date.isoformat(),),
+        ).fetchall()
+        assert len(top_rows) == 2
+        assert [row[0] for row in top_rows] == [1, 2]
+        assert {row[1] for row in top_rows} == set(top_symbols_list)
+
+        watch_rows = conn.execute(
+            """
+            SELECT rank, symbol, why, tags_json
+            FROM watchlist
+            WHERE run_date = ?
+            ORDER BY rank
+            """,
+            (run_date.isoformat(),),
+        ).fetchall()
+        assert len(watch_rows) == 2
+        assert watch_rows[0][0] == 1
+        assert isinstance(watch_rows[0][2], str)
+        tags = json.loads(watch_rows[0][3]) if watch_rows[0][3] else []
+        assert isinstance(tags, list)
+
+        summary_row = conn.execute(
+            """
+            SELECT row_counts_json, used_cached_csv
+            FROM run_summary
+            WHERE run_date = ?
+            """,
+            (run_date.isoformat(),),
+        ).fetchone()
+        assert summary_row is not None
+        summary_payload = json.loads(summary_row[0])
+        assert summary_payload["topN"] == 2
+        assert summary_row[1] in (0, 1)
+
 
 def test_run_emits_empty_outputs_when_download_fails(tmp_path, monkeypatch):
+    db_path = Path("premarket.db")
+    if db_path.exists():
+        db_path.unlink()
+
     monkeypatch.setenv("FINVIZ_EXPORT_URL", "https://example.com/export")
     out_base = tmp_path / "out"
     run_date = date(2024, 1, 2)
@@ -185,3 +242,19 @@ def test_run_emits_empty_outputs_when_download_fails(tmp_path, monkeypatch):
     assert summary["row_counts"] == {"raw": 0, "qualified": 0, "rejected": 0, "topN": 0}
     assert "download_failed_no_cache" in summary["notes"]
     assert summary["used_cached_csv"] is False
+
+    assert db_path.exists()
+    with sqlite3.connect(db_path) as conn:
+        top_rows = conn.execute(
+            "SELECT rank FROM top_n WHERE run_date = ?",
+            (run_date.isoformat(),),
+        ).fetchall()
+        assert top_rows == []
+
+        summary_row = conn.execute(
+            "SELECT row_counts_json FROM run_summary WHERE run_date = ?",
+            (run_date.isoformat(),),
+        ).fetchone()
+        assert summary_row is not None
+        payload = json.loads(summary_row[0])
+        assert payload["topN"] == 0

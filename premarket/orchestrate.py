@@ -297,6 +297,7 @@ def _emit_empty_outputs(
     generated_at: str,
     requested_top_n: int,
     run_summary: Dict[str, object],
+    run_date: str,
 ) -> None:
     persist.write_json([], output_dir / "full_watchlist.json")
     persist.write_json(
@@ -311,6 +312,14 @@ def _emit_empty_outputs(
     empty_table = pd.DataFrame(columns=WATCHLIST_COLUMNS)
     persist.write_csv(empty_table, output_dir / "watchlist.csv")
     persist.write_json(run_summary, output_dir / "run_summary.json")
+    persist.write_sqlite_outputs(
+        run_date=run_date,
+        generated_at=generated_at,
+        full_watchlist=[],
+        top_n_records=[],
+        watchlist_records=[],
+        run_summary=run_summary,
+    )
 
 
 def _format_tier_counts(tier_counts: Dict[str, int]) -> str:
@@ -381,7 +390,7 @@ def run(params: RunParams) -> int:
             False,
             0,
         )
-        _emit_empty_outputs(output_dir, generated_at, top_n_value, run_summary)
+        _emit_empty_outputs(output_dir, generated_at, top_n_value, run_summary, today)
         tier_display = _format_tier_counts({})
         summary_line = (
             f"Date={today} {_timezone_label(params.timezone, params.run_date)} | "
@@ -449,7 +458,7 @@ def run(params: RunParams) -> int:
             False,
             week52_warnings,
         )
-        _emit_empty_outputs(output_dir, generated_at, top_n_value, run_summary)
+        _emit_empty_outputs(output_dir, generated_at, top_n_value, run_summary, today)
         empty_tiers: Dict[str, int] = {}
         tier_display = _format_tier_counts(empty_tiers)
         summary_line = (
@@ -497,7 +506,7 @@ def run(params: RunParams) -> int:
             sector_trimmed,
             week52_warnings,
         )
-        _emit_empty_outputs(output_dir, generated_at, top_n_value, run_summary)
+        _emit_empty_outputs(output_dir, generated_at, top_n_value, run_summary, today)
         empty_tiers = {}
         tier_display = _format_tier_counts(empty_tiers)
         summary_line = (
@@ -612,7 +621,28 @@ def run(params: RunParams) -> int:
         week52_warnings,
     )
     persist.write_json(run_summary, output_dir / "run_summary.json")
-
+    raw_watchlist_records = watchlist_table.to_dict(orient="records")
+    watchlist_records: list[Dict[str, object]] = []
+    for idx, record in enumerate(raw_watchlist_records, start=1):
+        cleaned = dict(record)
+        cleaned["rank"] = idx
+        watchlist_records.append(cleaned)
+    top_symbols_records = [
+        {
+            "rank": record.get("rank"),
+            "symbol": record.get("symbol"),
+            "score": record.get("score"),
+        }
+        for record in watchlist_records
+    ]
+    persist.write_sqlite_outputs(
+        run_date=today,
+        generated_at=generated_at,
+        full_watchlist=full_watchlist,
+        top_n_records=top_symbols_records,
+        watchlist_records=watchlist_records,
+        run_summary=run_summary,
+    )
     summary_line = (
         f"Date={today} {_timezone_label(params.timezone, params.run_date)} | "
         f"TopN={row_counts['topN']} | A/B/C={_format_tier_counts(tier_counts)} | "
