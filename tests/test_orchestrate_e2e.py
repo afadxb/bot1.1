@@ -135,6 +135,7 @@ def test_orchestrate_end_to_end(tmp_path, monkeypatch):
     topn = json.loads((out_dir / "topN.json").read_text())
     assert topn["top_n"] == 2
     assert len(topn["symbols"]) == 2
+    top_symbols_list = topn["symbols"]
 
     watchlist_df = pd.read_csv(out_dir / "watchlist.csv")
     assert "Why" in watchlist_df.columns
@@ -156,36 +157,49 @@ def test_orchestrate_end_to_end(tmp_path, monkeypatch):
     assert db_path.exists()
     with sqlite3.connect(db_path) as conn:
         full_rows = conn.execute(
-            "SELECT payload FROM full_watchlist WHERE run_date = ?",
+            "SELECT symbol, score FROM full_watchlist WHERE run_date = ?",
             (run_date.isoformat(),),
         ).fetchall()
         assert full_rows
-        first_full = json.loads(full_rows[0][0])
-        assert first_full["symbol"] in {"AAA", "BBB"}
+        first_symbol, first_score = full_rows[0]
+        assert first_symbol in {"AAA", "BBB"}
+        assert first_score is not None
 
         top_rows = conn.execute(
-            "SELECT payload FROM top_n WHERE run_date = ?",
+            "SELECT rank, symbol, score FROM top_n WHERE run_date = ? ORDER BY rank",
             (run_date.isoformat(),),
         ).fetchall()
         assert len(top_rows) == 2
-        top_payloads = sorted((json.loads(row[0]) for row in top_rows), key=lambda item: item["rank"])
-        assert [item["rank"] for item in top_payloads] == [1, 2]
+        assert [row[0] for row in top_rows] == [1, 2]
+        assert {row[1] for row in top_rows} == set(top_symbols_list)
 
         watch_rows = conn.execute(
-            "SELECT payload FROM watchlist WHERE run_date = ?",
+            """
+            SELECT rank, symbol, why, tags_json
+            FROM watchlist
+            WHERE run_date = ?
+            ORDER BY rank
+            """,
             (run_date.isoformat(),),
         ).fetchall()
         assert len(watch_rows) == 2
-        watch_payload = json.loads(watch_rows[0][0])
-        assert "Why" in watch_payload
+        assert watch_rows[0][0] == 1
+        assert isinstance(watch_rows[0][2], str)
+        tags = json.loads(watch_rows[0][3]) if watch_rows[0][3] else []
+        assert isinstance(tags, list)
 
         summary_row = conn.execute(
-            "SELECT payload FROM run_summary WHERE run_date = ?",
+            """
+            SELECT row_counts_json, used_cached_csv
+            FROM run_summary
+            WHERE run_date = ?
+            """,
             (run_date.isoformat(),),
         ).fetchone()
         assert summary_row is not None
         summary_payload = json.loads(summary_row[0])
-        assert summary_payload["row_counts"]["topN"] == 2
+        assert summary_payload["topN"] == 2
+        assert summary_row[1] in (0, 1)
 
 
 def test_run_emits_empty_outputs_when_download_fails(tmp_path, monkeypatch):
@@ -232,15 +246,15 @@ def test_run_emits_empty_outputs_when_download_fails(tmp_path, monkeypatch):
     assert db_path.exists()
     with sqlite3.connect(db_path) as conn:
         top_rows = conn.execute(
-            "SELECT payload FROM top_n WHERE run_date = ?",
+            "SELECT rank FROM top_n WHERE run_date = ?",
             (run_date.isoformat(),),
         ).fetchall()
         assert top_rows == []
 
         summary_row = conn.execute(
-            "SELECT payload FROM run_summary WHERE run_date = ?",
+            "SELECT row_counts_json FROM run_summary WHERE run_date = ?",
             (run_date.isoformat(),),
         ).fetchone()
         assert summary_row is not None
         payload = json.loads(summary_row[0])
-        assert payload["row_counts"]["topN"] == 0
+        assert payload["topN"] == 0
