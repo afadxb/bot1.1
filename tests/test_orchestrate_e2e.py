@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from pathlib import Path
 
 from datetime import date
@@ -94,6 +95,10 @@ def _sample_csv(path: Path) -> None:
 
 
 def test_orchestrate_end_to_end(tmp_path, monkeypatch):
+    db_path = Path("premarket.db")
+    if db_path.exists():
+        db_path.unlink()
+
     csv_path = tmp_path / "finviz.csv"
     _sample_csv(csv_path)
 
@@ -148,8 +153,46 @@ def test_orchestrate_end_to_end(tmp_path, monkeypatch):
     parsed_reasons = [part.strip() for part in reason.split("|") if part.strip()]
     assert "exchange_excluded" in parsed_reasons
 
+    assert db_path.exists()
+    with sqlite3.connect(db_path) as conn:
+        full_rows = conn.execute(
+            "SELECT payload FROM full_watchlist WHERE run_date = ?",
+            (run_date.isoformat(),),
+        ).fetchall()
+        assert full_rows
+        first_full = json.loads(full_rows[0][0])
+        assert first_full["symbol"] in {"AAA", "BBB"}
+
+        top_rows = conn.execute(
+            "SELECT payload FROM top_n WHERE run_date = ?",
+            (run_date.isoformat(),),
+        ).fetchall()
+        assert len(top_rows) == 2
+        top_payloads = sorted((json.loads(row[0]) for row in top_rows), key=lambda item: item["rank"])
+        assert [item["rank"] for item in top_payloads] == [1, 2]
+
+        watch_rows = conn.execute(
+            "SELECT payload FROM watchlist WHERE run_date = ?",
+            (run_date.isoformat(),),
+        ).fetchall()
+        assert len(watch_rows) == 2
+        watch_payload = json.loads(watch_rows[0][0])
+        assert "Why" in watch_payload
+
+        summary_row = conn.execute(
+            "SELECT payload FROM run_summary WHERE run_date = ?",
+            (run_date.isoformat(),),
+        ).fetchone()
+        assert summary_row is not None
+        summary_payload = json.loads(summary_row[0])
+        assert summary_payload["row_counts"]["topN"] == 2
+
 
 def test_run_emits_empty_outputs_when_download_fails(tmp_path, monkeypatch):
+    db_path = Path("premarket.db")
+    if db_path.exists():
+        db_path.unlink()
+
     monkeypatch.setenv("FINVIZ_EXPORT_URL", "https://example.com/export")
     out_base = tmp_path / "out"
     run_date = date(2024, 1, 2)
@@ -185,3 +228,19 @@ def test_run_emits_empty_outputs_when_download_fails(tmp_path, monkeypatch):
     assert summary["row_counts"] == {"raw": 0, "qualified": 0, "rejected": 0, "topN": 0}
     assert "download_failed_no_cache" in summary["notes"]
     assert summary["used_cached_csv"] is False
+
+    assert db_path.exists()
+    with sqlite3.connect(db_path) as conn:
+        top_rows = conn.execute(
+            "SELECT payload FROM top_n WHERE run_date = ?",
+            (run_date.isoformat(),),
+        ).fetchall()
+        assert top_rows == []
+
+        summary_row = conn.execute(
+            "SELECT payload FROM run_summary WHERE run_date = ?",
+            (run_date.isoformat(),),
+        ).fetchone()
+        assert summary_row is not None
+        payload = json.loads(summary_row[0])
+        assert payload["row_counts"]["topN"] == 0
